@@ -1,0 +1,14 @@
+# Chaves e configuracao local — NUNCA versionar
+config_local.py
+
+# Dados gerados em tempo de execucao
+historico_predicoes.xlsx
+cache_api_football.json
+cerebro_bot.joblib
+copa_2026_resultados.csv
+historico_jogos.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
