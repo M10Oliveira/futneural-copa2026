@@ -5,6 +5,7 @@ config_local.py
 historico_predicoes.xlsx
 cache_api_football.json
 cerebro_bot.joblib
+nivel_bot.json
 copa_2026_resultados.csv
 historico_jogos.csv
 

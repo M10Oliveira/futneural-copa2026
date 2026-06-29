@@ -43,6 +43,7 @@ EXCEL_PATH = "historico_predicoes.xlsx"
 DATASET_PATH = "historico_jogos.csv"
 MODELO_PATH = "cerebro_bot.joblib"
 COPA_CSV_PATH = "copa_2026_resultados.csv"
+NIVEL_PATH = "nivel_bot.json"
 CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache_api_football.json")
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,10 @@ CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache_api
 MEDIA_GOLS_REFERENCIA = 1.3
 MIN_AMOSTRAS_REGRESSAO = 15
 MIN_AMOSTRAS_REDE_NEURAL = 40
+
+# Heuristicas de escanteios e cartoes
+MEDIA_ESCANTEIOS_BASE = 10.0
+MEDIA_CARTOES_BASE = 4.0
 
 # ---------------------------------------------------------------------------
 # Colunas do Excel de previsoes

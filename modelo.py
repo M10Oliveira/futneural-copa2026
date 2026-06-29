@@ -7,6 +7,7 @@ from scipy.stats import poisson
 
 import config as cfg
 import api_football as fb
+import nivel
 
 FEATURES = ["GF_Casa", "GC_Casa", "Forma_Casa", "GF_Fora", "GC_Fora", "Forma_Fora"]
 
@@ -45,38 +46,123 @@ def treinar_modelo():
     modelo = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=1000, random_state=42)
     modelo.fit(X_train_s, y_train)
 
-    preds = modelo.predict(X_test_s)
-    acuracia = accuracy_score(y_test, preds) * 100
-
     joblib.dump((modelo, scaler), cfg.MODELO_PATH)
-
     return modelo, scaler, len(df), "MLP"
 
 
 # ---------------------------------------------------------------------------
-# Poisson
+# Poisson — retorna lambdas, probs 1X2 e matriz de placares
 # ---------------------------------------------------------------------------
-def calcular_poisson(gf_casa, gc_fora, gf_fora, gc_casa):
+def calcular_poisson(gf_casa, gc_fora, gf_fora, gc_casa, max_gols=7):
     lambda_casa = max((gf_casa * gc_fora) / cfg.MEDIA_GOLS_REFERENCIA, 0.35)
     lambda_fora = max((gf_fora * gc_casa) / cfg.MEDIA_GOLS_REFERENCIA, 0.35)
 
+    matriz = np.zeros((max_gols, max_gols))
+    for i in range(max_gols):
+        for j in range(max_gols):
+            matriz[i][j] = poisson.pmf(i, lambda_casa) * poisson.pmf(j, lambda_fora)
+
     prob_casa = prob_empate = prob_fora = 0.0
-    for gc in range(7):
-        for gf in range(7):
-            prob = poisson.pmf(gc, lambda_casa) * poisson.pmf(gf, lambda_fora)
-            if gc > gf:
-                prob_casa += prob
-            elif gc == gf:
-                prob_empate += prob
+    for i in range(max_gols):
+        for j in range(max_gols):
+            if i > j:
+                prob_casa += matriz[i][j]
+            elif i == j:
+                prob_empate += matriz[i][j]
             else:
-                prob_fora += prob
+                prob_fora += matriz[i][j]
 
-    return lambda_casa, lambda_fora, prob_casa, prob_empate, prob_fora
+    return lambda_casa, lambda_fora, prob_casa, prob_empate, prob_fora, matriz
 
 
-def estimar_escanteios(stats_casa, stats_fora):
-    tendencia = stats_casa["GF_Media"] + stats_fora["GF_Media"]
-    return round(4.0 + tendencia * 2.0, 1)
+# ---------------------------------------------------------------------------
+# Mercados de aposta (derivados da matriz de Poisson)
+# ---------------------------------------------------------------------------
+def calcular_mercados(lambda_casa, lambda_fora, matriz, prob_casa, prob_empate, prob_fora,
+                      stats_casa, stats_fora):
+    max_gols = matriz.shape[0]
+    mercados = {}
+
+    # --- Over/Under gols ---
+    for linha in [0.5, 1.5, 2.5, 3.5, 4.5]:
+        over = 0.0
+        for i in range(max_gols):
+            for j in range(max_gols):
+                if i + j > linha:
+                    over += matriz[i][j]
+        mercados[f"over_{linha}"] = round(over, 4)
+        mercados[f"under_{linha}"] = round(1 - over, 4)
+
+    # --- BTTS (Ambas Marcam) ---
+    btts = 0.0
+    for i in range(1, max_gols):
+        for j in range(1, max_gols):
+            btts += matriz[i][j]
+    mercados["btts_sim"] = round(btts, 4)
+    mercados["btts_nao"] = round(1 - btts, 4)
+
+    # --- Chance Dupla ---
+    mercados["chance_1x"] = round(prob_casa + prob_empate, 4)
+    mercados["chance_x2"] = round(prob_empate + prob_fora, 4)
+    mercados["chance_12"] = round(prob_casa + prob_fora, 4)
+
+    # --- Placar exato (top 8) ---
+    placares = []
+    for i in range(max_gols):
+        for j in range(max_gols):
+            if matriz[i][j] > 0.005:
+                placares.append((f"{i}x{j}", round(matriz[i][j], 4)))
+    placares.sort(key=lambda x: x[1], reverse=True)
+    mercados["placares_exatos"] = placares[:8]
+
+    # --- Resultado 1o Tempo (Poisson com lambda/2) ---
+    lc_ht = lambda_casa / 2
+    lf_ht = lambda_fora / 2
+    ht_casa = ht_empate = ht_fora = 0.0
+    for i in range(5):
+        for j in range(5):
+            p = poisson.pmf(i, lc_ht) * poisson.pmf(j, lf_ht)
+            if i > j:
+                ht_casa += p
+            elif i == j:
+                ht_empate += p
+            else:
+                ht_fora += p
+    mercados["ht_casa"] = round(ht_casa, 4)
+    mercados["ht_empate"] = round(ht_empate, 4)
+    mercados["ht_fora"] = round(ht_fora, 4)
+
+    # --- Escanteios (heuristica com Poisson) ---
+    ataque_total = stats_casa["GF_Media"] + stats_fora["GF_Media"]
+    lambda_escanteios = cfg.MEDIA_ESCANTEIOS_BASE + (ataque_total - 2.0) * 1.5
+    lambda_escanteios = max(lambda_escanteios, 6.0)
+    mercados["escanteios_esperados"] = round(lambda_escanteios, 1)
+
+    for linha in [7.5, 8.5, 9.5, 10.5, 11.5]:
+        prob_over = 1 - sum(poisson.pmf(k, lambda_escanteios) for k in range(int(linha) + 1))
+        mercados[f"escanteios_over_{linha}"] = round(prob_over, 4)
+
+    # --- Cartoes (heuristica) ---
+    defesa = stats_casa["GC_Media"] + stats_fora["GC_Media"]
+    lambda_cartoes = cfg.MEDIA_CARTOES_BASE + (defesa - 2.0) * 0.8
+    forma_media = (stats_casa.get("Forma_Media", 1.5) + stats_fora.get("Forma_Media", 1.5)) / 2
+    if forma_media < 1.2:
+        lambda_cartoes += 0.5
+    lambda_cartoes = max(lambda_cartoes, 2.5)
+    mercados["cartoes_esperados"] = round(lambda_cartoes, 1)
+
+    for linha in [2.5, 3.5, 4.5, 5.5]:
+        prob_over = 1 - sum(poisson.pmf(k, lambda_cartoes) for k in range(int(linha) + 1))
+        mercados[f"cartoes_over_{linha}"] = round(prob_over, 4)
+
+    # --- Gols de cada time ---
+    for linha in [0.5, 1.5, 2.5]:
+        over_casa = 1 - sum(poisson.pmf(k, lambda_casa) for k in range(int(linha) + 1))
+        over_fora = 1 - sum(poisson.pmf(k, lambda_fora) for k in range(int(linha) + 1))
+        mercados[f"gols_casa_over_{linha}"] = round(over_casa, 4)
+        mercados[f"gols_fora_over_{linha}"] = round(over_fora, 4)
+
+    return mercados
 
 
 # ---------------------------------------------------------------------------
@@ -100,9 +186,9 @@ def blend_probabilidades(prob_poisson, prob_ml, peso_ml):
 
 
 # ---------------------------------------------------------------------------
-# Previsao (retorna dict em vez de printar)
+# Previsao completa (retorna dict com TODOS os mercados)
 # ---------------------------------------------------------------------------
-def realizar_previsao(time_casa, time_fora, modelo, scaler, n_amostras, nome_modelo):
+def realizar_previsao(time_casa, time_fora, modelo_ml, scaler, n_amostras, nome_modelo):
     stats_casa, fonte_casa, id_casa = fb.obter_dados_time(time_casa)
     stats_fora, fonte_fora, id_fora = fb.obter_dados_time(time_fora)
 
@@ -113,7 +199,7 @@ def realizar_previsao(time_casa, time_fora, modelo, scaler, n_amostras, nome_mod
         except fb.FootballAPIError:
             pass
 
-    lambda_casa, lambda_fora, p_casa, p_emp, p_fora = calcular_poisson(
+    lambda_casa, lambda_fora, p_casa, p_emp, p_fora, matriz = calcular_poisson(
         stats_casa["GF_Media"], stats_fora["GC_Media"],
         stats_fora["GF_Media"], stats_casa["GC_Media"],
     )
@@ -123,7 +209,7 @@ def realizar_previsao(time_casa, time_fora, modelo, scaler, n_amostras, nome_mod
     peso_ml = 0.0
     prob_final = prob_poisson
 
-    if modelo is not None and scaler is not None:
+    if modelo_ml is not None and scaler is not None:
         features = np.array([[
             stats_casa["GF_Media"], stats_casa["GC_Media"],
             stats_casa.get("Forma_Media", 1.5),
@@ -131,8 +217,8 @@ def realizar_previsao(time_casa, time_fora, modelo, scaler, n_amostras, nome_mod
             stats_fora.get("Forma_Media", 1.5),
         ]])
         features_s = scaler.transform(features)
-        prob_array = modelo.predict_proba(features_s)[0]
-        prob_dict = dict(zip(modelo.classes_, prob_array))
+        prob_array = modelo_ml.predict_proba(features_s)[0]
+        prob_dict = dict(zip(modelo_ml.classes_, prob_array))
         prob_ml = (
             prob_dict.get("CASA", p_casa),
             prob_dict.get("EMPATE", p_emp),
@@ -142,8 +228,14 @@ def realizar_previsao(time_casa, time_fora, modelo, scaler, n_amostras, nome_mod
         prob_final = blend_probabilidades(prob_poisson, prob_ml, peso_ml)
         modelo_usado = f"Poisson + {nome_modelo} (blend)"
 
-    escanteios = estimar_escanteios(stats_casa, stats_fora)
     p_c, p_e, p_f = prob_final
+
+    mercados = calcular_mercados(
+        lambda_casa, lambda_fora, matriz, p_c, p_e, p_f,
+        stats_casa, stats_fora,
+    )
+
+    info_nivel = nivel.obter_nivel()
 
     resultado = {
         "time_casa": time_casa,
@@ -153,7 +245,6 @@ def realizar_previsao(time_casa, time_fora, modelo, scaler, n_amostras, nome_mod
         "prob_fora": p_f,
         "xg_casa": round(lambda_casa, 2),
         "xg_fora": round(lambda_fora, 2),
-        "escanteios": escanteios,
         "modelo_usado": modelo_usado,
         "peso_ml": peso_ml,
         "fonte_casa": fonte_casa,
@@ -161,10 +252,69 @@ def realizar_previsao(time_casa, time_fora, modelo, scaler, n_amostras, nome_mod
         "stats_casa": stats_casa,
         "stats_fora": stats_fora,
         "fixture_info": fixture_info,
+        "mercados": mercados,
+        "nivel": info_nivel,
     }
 
     salvar_previsao_excel(resultado)
     return resultado
+
+
+# ---------------------------------------------------------------------------
+# Formatar previsao como texto (pronto para Telegram)
+# ---------------------------------------------------------------------------
+def formatar_previsao_texto(r):
+    m = r["mercados"]
+    n = r["nivel"]
+
+    linhas = [
+        f"{r['time_casa'].upper()} x {r['time_fora'].upper()}",
+        f"",
+        f"RESULTADO (1X2)",
+        f"  Casa: {r['prob_casa']*100:.1f}%  |  Empate: {r['prob_empate']*100:.1f}%  |  Fora: {r['prob_fora']*100:.1f}%",
+        f"  xG: {r['xg_casa']} - {r['xg_fora']}",
+        f"",
+        f"CHANCE DUPLA",
+        f"  1X: {m['chance_1x']*100:.1f}%  |  X2: {m['chance_x2']*100:.1f}%  |  12: {m['chance_12']*100:.1f}%",
+        f"",
+        f"OVER/UNDER GOLS",
+        f"  Over 0.5: {m['over_0.5']*100:.1f}%  |  Over 1.5: {m['over_1.5']*100:.1f}%",
+        f"  Over 2.5: {m['over_2.5']*100:.1f}%  |  Over 3.5: {m['over_3.5']*100:.1f}%",
+        f"",
+        f"AMBAS MARCAM (BTTS)",
+        f"  Sim: {m['btts_sim']*100:.1f}%  |  Nao: {m['btts_nao']*100:.1f}%",
+        f"",
+        f"GOLS POR EQUIPE",
+        f"  {r['time_casa']}: Over 0.5 {m['gols_casa_over_0.5']*100:.0f}%  |  Over 1.5 {m['gols_casa_over_1.5']*100:.0f}%",
+        f"  {r['time_fora']}: Over 0.5 {m['gols_fora_over_0.5']*100:.0f}%  |  Over 1.5 {m['gols_fora_over_1.5']*100:.0f}%",
+        f"",
+        f"1o TEMPO",
+        f"  Casa: {m['ht_casa']*100:.1f}%  |  Empate: {m['ht_empate']*100:.1f}%  |  Fora: {m['ht_fora']*100:.1f}%",
+        f"",
+        f"PLACAR EXATO (mais provaveis)",
+    ]
+
+    for placar, prob in m["placares_exatos"]:
+        linhas.append(f"  {placar}: {prob*100:.1f}%")
+
+    linhas.extend([
+        f"",
+        f"ESCANTEIOS (~{m['escanteios_esperados']})",
+        f"  Over 8.5: {m.get('escanteios_over_8.5', 0)*100:.0f}%  |  "
+        f"Over 9.5: {m.get('escanteios_over_9.5', 0)*100:.0f}%  |  "
+        f"Over 10.5: {m.get('escanteios_over_10.5', 0)*100:.0f}%",
+        f"",
+        f"CARTOES (~{m['cartoes_esperados']})",
+        f"  Over 3.5: {m.get('cartoes_over_3.5', 0)*100:.0f}%  |  "
+        f"Over 4.5: {m.get('cartoes_over_4.5', 0)*100:.0f}%  |  "
+        f"Over 5.5: {m.get('cartoes_over_5.5', 0)*100:.0f}%",
+        f"",
+        f"Modelo: {r['modelo_usado']}",
+        f"Nivel Bot: {n['nivel']}/10  ({n['win_rate']}% acerto em {n['total']} jogos)",
+        f"Fonte: {r['fonte_casa']} | {r['fonte_fora']}",
+    ])
+
+    return "\n".join(linhas)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +347,7 @@ def salvar_previsao_excel(r):
             if not dup.empty:
                 return
 
+    m = r["mercados"]
     nova = {
         "ID": len(df) + 1,
         "Data/Hora": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -209,7 +360,7 @@ def salvar_previsao_excel(r):
         "Prob Casa (%)": round(r["prob_casa"] * 100, 1),
         "Prob Empate (%)": round(r["prob_empate"] * 100, 1),
         "Prob Fora (%)": round(r["prob_fora"] * 100, 1),
-        "Escanteios Previstos": r["escanteios"],
+        "Escanteios Previstos": m["escanteios_esperados"],
         "Modelo Utilizado": r["modelo_usado"],
         "Peso Modelo IA (%)": round(r["peso_ml"] * 100, 1),
         "GF_Media_Casa": r["stats_casa"]["GF_Media"],
@@ -229,7 +380,7 @@ def salvar_previsao_excel(r):
 
 
 # ---------------------------------------------------------------------------
-# Fechamento de resultados
+# Fechamento de resultados (com atualizacao de nivel)
 # ---------------------------------------------------------------------------
 def _classificar(df, idx, gols_casa, gols_fora):
     res_real = "CASA" if gols_casa > gols_fora else ("EMPATE" if gols_casa == gols_fora else "FORA")
@@ -238,20 +389,21 @@ def _classificar(df, idx, gols_casa, gols_fora):
     p_f = df.at[idx, "Prob Fora (%)"]
     maior = max(p_c, p_e, p_f)
     palpite = "CASA" if maior == p_c else ("EMPATE" if maior == p_e else "FORA")
+    acertou = palpite == res_real
+    confianca = maior / 100.0
 
     df.at[idx, "Gols Real Casa"] = gols_casa
     df.at[idx, "Gols Real Fora"] = gols_fora
     df.at[idx, "Resultado Real"] = res_real
-    df.at[idx, "Status Previsao"] = "ACERTOU" if palpite == res_real else "ERROU"
+    df.at[idx, "Status Previsao"] = "ACERTOU" if acertou else "ERROU"
+
+    jogo_str = f"{df.at[idx, 'Equipa Casa']} x {df.at[idx, 'Equipa Fora']}"
+    nivel.atualizar_nivel(jogo_str, acertou, confianca)
+
     return res_real
 
 
 def fechar_resultados(callback_log=None):
-    """
-    Fecha resultados automaticamente via API.
-    Retorna (mensagens: list[str], pendentes_manuais: list[dict]).
-    pendentes_manuais = [{"idx": int, "id": int, "casa": str, "fora": str}, ...]
-    """
     log = []
 
     def _log(msg):
@@ -280,18 +432,18 @@ def fechar_resultados(callback_log=None):
         try:
             resultado = fb.obter_resultado_fixture(int(row["ID Fixture API"]))
         except fb.FootballAPIError as e:
-            _log(f"ID {row['ID']}: erro ao consultar — {e}")
+            _log(f"ID {row['ID']}: erro — {e}")
             continue
 
         if resultado["status"] in fb.STATUS_FINALIZADOS:
             _classificar(df, idx, resultado["gols_casa"], resultado["gols_fora"])
             _log(f"ID {row['ID']}: {row['Equipa Casa']} {resultado['gols_casa']} x "
-                 f"{resultado['gols_fora']} {row['Equipa Fora']} — fechado automaticamente.")
+                 f"{resultado['gols_fora']} {row['Equipa Fora']} — fechado.")
             houve_alteracao = True
         elif resultado["status"] in fb.STATUS_CANCELADOS:
-            _log(f"ID {row['ID']}: jogo cancelado/suspenso ({resultado['status']}).")
+            _log(f"ID {row['ID']}: cancelado ({resultado['status']}).")
         else:
-            _log(f"ID {row['ID']}: ainda nao terminou ({resultado['status']}).")
+            _log(f"ID {row['ID']}: em andamento ({resultado['status']}).")
 
     manuais = []
 
@@ -343,6 +495,9 @@ def fechar_resultados(callback_log=None):
 
     if manuais:
         _log(f"{len(manuais)} previsao(oes) precisam de placar manual.")
+
+    n = nivel.obter_nivel()
+    _log(f"Nivel do bot: {n['nivel']}/10 ({n['win_rate']}% acerto)")
 
     return log, manuais
 

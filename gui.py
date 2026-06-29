@@ -2,6 +2,7 @@ import threading
 import customtkinter as ctk
 import api_football as fb
 import modelo
+import nivel
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -25,6 +26,7 @@ class App(ctk.CTk):
         self._mostrar_frame("previsao")
         self._carregar_modelo()
         self._atualizar_status_apis()
+        self._atualizar_nivel_label()
 
     # ------------------------------------------------------------------
     # Sidebar
@@ -51,8 +53,11 @@ class App(ctk.CTk):
                 row=i, column=0, padx=20, pady=8
             )
 
+        self._lbl_nivel = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=12, weight="bold"))
+        self._lbl_nivel.grid(row=6, column=0, padx=10, pady=(10, 2), sticky="s")
+
         self._lbl_status = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=11))
-        self._lbl_status.grid(row=6, column=0, padx=10, pady=10, sticky="s")
+        self._lbl_status.grid(row=7, column=0, padx=10, pady=(2, 10), sticky="s")
 
     # ------------------------------------------------------------------
     # Frames
@@ -124,7 +129,13 @@ class App(ctk.CTk):
             cards, text="Aguardando dados...",
             font=ctk.CTkFont(size=13), wraplength=700,
         )
-        self._lbl_detalhes.grid(row=1, column=0, columnspan=3, pady=10, padx=10)
+        self._lbl_detalhes.grid(row=1, column=0, columnspan=3, pady=(5, 0), padx=10)
+
+        self._txt_mercados = ctk.CTkTextbox(
+            frame, width=700, height=280,
+            font=ctk.CTkFont(family="Consolas", size=12),
+        )
+        self._txt_mercados.pack(pady=(5, 10), padx=20, fill="both", expand=True)
 
         return frame
 
@@ -169,18 +180,13 @@ class App(ctk.CTk):
             text=f"Vitoria Fora\n{r['prob_fora']*100:.1f}%", text_color="#e74c3c"
         )
 
-        fixture_txt = ""
-        if r["fixture_info"]:
-            fixture_txt = f" | Jogo Copa (fixture {r['fixture_info']['fixture_id']})"
-
-        detalhes = (
-            f"xG: {r['xg_casa']} x {r['xg_fora']}  |  "
-            f"Escanteios: ~{r['escanteios']}  |  "
-            f"Modelo: {r['modelo_usado']}{fixture_txt}\n"
-            f"Fonte Casa: {r['fonte_casa']}\n"
-            f"Fonte Fora: {r['fonte_fora']}"
+        self._lbl_detalhes.configure(
+            text=f"Modelo: {r['modelo_usado']}  |  Fonte: {r['fonte_casa']}",
+            text_color="gray",
         )
-        self._lbl_detalhes.configure(text=detalhes, text_color="gray")
+
+        self._txt_mercados.delete("0.0", "end")
+        self._txt_mercados.insert("end", modelo.formatar_previsao_texto(r))
 
     def _erro_previsao(self, msg):
         self._progress.stop()
@@ -339,6 +345,7 @@ class App(ctk.CTk):
                 self.after(0, lambda: self._btn_sincronizar.configure(
                     state="normal", text="Sincronizar Resultados (API)"
                 ))
+                self.after(0, self._atualizar_nivel_label)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -357,6 +364,7 @@ class App(ctk.CTk):
         try:
             modelo.fechar_resultado_manual(idx, gc, gf)
             self._append_resultado(f"ID {idx+1} fechado manualmente: {gc} x {gf}")
+            self._atualizar_nivel_label()
         except Exception as e:
             self._append_resultado(f"Erro ao fechar: {e}")
 
@@ -485,6 +493,17 @@ class App(ctk.CTk):
             self.after(0, lambda: self._txt_status.insert("end", texto))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Nivel do bot
+    # ------------------------------------------------------------------
+    def _atualizar_nivel_label(self):
+        n = nivel.obter_nivel()
+        cor = "#e74c3c" if n["nivel"] < 4 else ("#f1c40f" if n["nivel"] < 7 else "#2ecc71")
+        self._lbl_nivel.configure(
+            text=f"Nivel: {n['nivel']}/10 ({n['win_rate']}%)",
+            text_color=cor,
+        )
 
     # ------------------------------------------------------------------
     # Carregamento do modelo na inicializacao
