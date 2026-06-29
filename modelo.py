@@ -70,10 +70,24 @@ def retreinar_modelo(tentativas=10, callback=None):
     X = df[FEATURES]
     y = df["Resultado_Real"]
 
-    melhor_acc = 0.0
+    # Carrega acuracia do modelo atual para so salvar se melhorar
+    acc_atual = 0.0
+    if os.path.exists(cfg.MODELO_PATH):
+        try:
+            modelo_atual, scaler_atual = joblib.load(cfg.MODELO_PATH)
+            X_s = scaler_atual.transform(X)
+            preds_atual = modelo_atual.predict(X_s)
+            acc_atual = accuracy_score(y, preds_atual) * 100
+        except Exception:
+            pass
+
+    melhor_acc = acc_atual
     melhor_modelo = None
     melhor_scaler = None
     resultados = []
+
+    if callback:
+        callback(f"Acuracia atual: {acc_atual:.1f}% (so salva se superar)")
 
     for i in range(tentativas):
         seed = random.randint(1, 99999)
@@ -103,12 +117,17 @@ def retreinar_modelo(tentativas=10, callback=None):
             melhor_modelo = modelo
             melhor_scaler = scaler
 
+    resumo = "\n".join(resultados)
+
     if melhor_modelo:
         joblib.dump((melhor_modelo, melhor_scaler), cfg.MODELO_PATH)
+        resumo += f"\n\nNovo recorde: {melhor_acc:.1f}% — modelo salvo ({len(df)} amostras)"
+    else:
+        resumo += (f"\n\nNenhuma tentativa superou o modelo atual ({acc_atual:.1f}%). "
+                   f"Modelo anterior mantido.")
 
-    resumo = "\n".join(resultados)
-    resumo += f"\n\nMelhor: {melhor_acc:.1f}% — modelo salvo ({len(df)} amostras)"
-    return (melhor_modelo, melhor_scaler, len(df), "MLP"), resumo
+    ret = (melhor_modelo, melhor_scaler, len(df), "MLP") if melhor_modelo else None
+    return ret, resumo
 
 
 # ---------------------------------------------------------------------------
