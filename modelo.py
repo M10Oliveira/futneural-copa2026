@@ -70,14 +70,18 @@ def retreinar_modelo(tentativas=10, callback=None):
     X = df[FEATURES]
     y = df["Resultado_Real"]
 
-    # Carrega acuracia do modelo atual para so salvar se melhorar
+    # Split FIXO para todos: mesmo treino, mesmo teste, comparacao justa
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=0
+    )
+
     acc_atual = 0.0
     if os.path.exists(cfg.MODELO_PATH):
         try:
             modelo_atual, scaler_atual = joblib.load(cfg.MODELO_PATH)
-            X_s = scaler_atual.transform(X)
-            preds_atual = modelo_atual.predict(X_s)
-            acc_atual = accuracy_score(y, preds_atual) * 100
+            X_test_s = scaler_atual.transform(X_test)
+            preds_atual = modelo_atual.predict(X_test_s)
+            acc_atual = accuracy_score(y_test, preds_atual) * 100
         except Exception:
             pass
 
@@ -91,9 +95,6 @@ def retreinar_modelo(tentativas=10, callback=None):
 
     for i in range(tentativas):
         seed = random.randint(1, 99999)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=seed
-        )
         scaler = StandardScaler()
         X_train_s = scaler.fit_transform(X_train)
         X_test_s = scaler.transform(X_test)
