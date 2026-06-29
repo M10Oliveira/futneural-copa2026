@@ -65,7 +65,7 @@ COLUNAS_EXCEL = [
     "xG Casa (Poisson)", "xG Fora (Poisson)",
     "Prob Casa (%)", "Prob Empate (%)", "Prob Fora (%)", "Escanteios Previstos",
     "Modelo Utilizado", "Peso Modelo IA (%)",
-    "GF_Media_Casa", "GC_Media_Casa", "Forma_Casa",
-    "GF_Media_Fora", "GC_Media_Fora", "Forma_Fora",
+    "GF_Media_Casa", "GC_Media_Casa", "Forma_Casa", "Escanteios_Media_Casa", "Cartoes_Media_Casa",
+    "GF_Media_Fora", "GC_Media_Fora", "Forma_Fora", "Escanteios_Media_Fora", "Cartoes_Media_Fora",
     "Gols Real Casa", "Gols Real Fora", "Resultado Real", "Status Previsao",
 ]

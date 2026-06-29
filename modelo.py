@@ -53,6 +53,64 @@ def treinar_modelo():
     return modelo, scaler, len(df), "MLP"
 
 
+def retreinar_modelo(tentativas=10, callback=None):
+    import random
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score
+
+    if not os.path.exists(cfg.DATASET_PATH):
+        return None, "Sem dataset para treinar."
+
+    df = pd.read_csv(cfg.DATASET_PATH)
+    if len(df) < 20:
+        return None, f"Dataset muito pequeno ({len(df)} linhas, minimo 20)."
+
+    X = df[FEATURES]
+    y = df["Resultado_Real"]
+
+    melhor_acc = 0.0
+    melhor_modelo = None
+    melhor_scaler = None
+    resultados = []
+
+    for i in range(tentativas):
+        seed = random.randint(1, 99999)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=seed
+        )
+        scaler = StandardScaler()
+        X_train_s = scaler.fit_transform(X_train)
+        X_test_s = scaler.transform(X_test)
+
+        modelo = MLPClassifier(
+            hidden_layer_sizes=(128, 64, 32),
+            max_iter=1500,
+            random_state=seed,
+        )
+        modelo.fit(X_train_s, y_train)
+
+        preds = modelo.predict(X_test_s)
+        acc = accuracy_score(y_test, preds) * 100
+
+        resultados.append(f"Tentativa {i+1}: {acc:.1f}% (seed {seed})")
+        if callback:
+            callback(f"Tentativa {i+1}/{tentativas}: {acc:.1f}%")
+
+        if acc > melhor_acc:
+            melhor_acc = acc
+            melhor_modelo = modelo
+            melhor_scaler = scaler
+
+    if melhor_modelo:
+        joblib.dump((melhor_modelo, melhor_scaler), cfg.MODELO_PATH)
+
+    resumo = "\n".join(resultados)
+    resumo += f"\n\nMelhor: {melhor_acc:.1f}% — modelo salvo ({len(df)} amostras)"
+    return (melhor_modelo, melhor_scaler, len(df), "MLP"), resumo
+
+
 # ---------------------------------------------------------------------------
 # Poisson — retorna lambdas, probs 1X2 e matriz de placares
 # ---------------------------------------------------------------------------
@@ -383,9 +441,13 @@ def salvar_previsao_excel(r):
         "GF_Media_Casa": r["stats_casa"]["GF_Media"],
         "GC_Media_Casa": r["stats_casa"]["GC_Media"],
         "Forma_Casa": r["stats_casa"].get("Forma_Media", np.nan),
+        "Escanteios_Media_Casa": r["stats_casa"].get("Escanteios_Media", 4.5),
+        "Cartoes_Media_Casa": r["stats_casa"].get("Cartoes_Media", 2.0),
         "GF_Media_Fora": r["stats_fora"]["GF_Media"],
         "GC_Media_Fora": r["stats_fora"]["GC_Media"],
         "Forma_Fora": r["stats_fora"].get("Forma_Media", np.nan),
+        "Escanteios_Media_Fora": r["stats_fora"].get("Escanteios_Media", 4.5),
+        "Cartoes_Media_Fora": r["stats_fora"].get("Cartoes_Media", 2.0),
         "Gols Real Casa": np.nan,
         "Gols Real Fora": np.nan,
         "Resultado Real": np.nan,
@@ -399,6 +461,33 @@ def salvar_previsao_excel(r):
 # ---------------------------------------------------------------------------
 # Fechamento de resultados (com atualizacao de nivel)
 # ---------------------------------------------------------------------------
+def _adicionar_ao_dataset(df, idx, resultado_real):
+    import csv
+    row = df.loc[idx]
+    nova_linha = {
+        "GF_Casa": row.get("GF_Media_Casa", 1.5),
+        "GC_Casa": row.get("GC_Media_Casa", 1.0),
+        "Forma_Casa": row.get("Forma_Casa", 1.5),
+        "Escanteios_Media_Casa": row.get("Escanteios_Media_Casa", 4.5),
+        "Cartoes_Media_Casa": row.get("Cartoes_Media_Casa", 2.0),
+        "GF_Fora": row.get("GF_Media_Fora", 1.5),
+        "GC_Fora": row.get("GC_Media_Fora", 1.0),
+        "Forma_Fora": row.get("Forma_Fora", 1.5),
+        "Escanteios_Media_Fora": row.get("Escanteios_Media_Fora", 4.5),
+        "Cartoes_Media_Fora": row.get("Cartoes_Media_Fora", 2.0),
+        "Escanteios_Total": 0,
+        "Cartoes_Total": 0,
+        "Resultado_Real": resultado_real,
+    }
+    cabecalho = list(nova_linha.keys())
+    existe = os.path.exists(cfg.DATASET_PATH)
+    with open(cfg.DATASET_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=cabecalho)
+        if not existe:
+            writer.writeheader()
+        writer.writerow(nova_linha)
+
+
 def _classificar(df, idx, gols_casa, gols_fora):
     res_real = "CASA" if gols_casa > gols_fora else ("EMPATE" if gols_casa == gols_fora else "FORA")
     p_c = df.at[idx, "Prob Casa (%)"]
@@ -412,6 +501,7 @@ def _classificar(df, idx, gols_casa, gols_fora):
     df.at[idx, "Gols Real Casa"] = gols_casa
     df.at[idx, "Gols Real Fora"] = gols_fora
     df.at[idx, "Resultado Real"] = res_real
+    _adicionar_ao_dataset(df, idx, res_real)
     df.at[idx, "Status Previsao"] = "ACERTOU" if acertou else "ERROU"
 
     jogo_str = f"{df.at[idx, 'Equipa Casa']} x {df.at[idx, 'Equipa Fora']}"

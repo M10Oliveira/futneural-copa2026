@@ -45,6 +45,7 @@ class App(ctk.CTk):
             ("Nova Previsao", lambda: self._mostrar_frame("previsao")),
             ("Jogos da Copa", lambda: self._mostrar_frame("copa")),
             ("Resultados", lambda: self._mostrar_frame("resultados")),
+            ("Retreinar Bot", lambda: self._mostrar_frame("treino")),
             ("Tabela de Grupos", lambda: self._mostrar_frame("tabela")),
             ("Status APIs", lambda: self._mostrar_frame("status")),
         ]
@@ -54,10 +55,10 @@ class App(ctk.CTk):
             )
 
         self._lbl_nivel = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=12, weight="bold"))
-        self._lbl_nivel.grid(row=6, column=0, padx=10, pady=(10, 2), sticky="s")
+        self._lbl_nivel.grid(row=7, column=0, padx=10, pady=(10, 2), sticky="s")
 
         self._lbl_status = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=11))
-        self._lbl_status.grid(row=7, column=0, padx=10, pady=(2, 10), sticky="s")
+        self._lbl_status.grid(row=8, column=0, padx=10, pady=(2, 10), sticky="s")
 
     # ------------------------------------------------------------------
     # Frames
@@ -66,6 +67,7 @@ class App(ctk.CTk):
         self._frames = {}
         self._frames["previsao"] = self._criar_frame_previsao()
         self._frames["copa"] = self._criar_frame_copa()
+        self._frames["treino"] = self._criar_frame_treino()
         self._frames["resultados"] = self._criar_frame_resultados()
         self._frames["tabela"] = self._criar_frame_tabela()
         self._frames["status"] = self._criar_frame_status()
@@ -308,6 +310,82 @@ class App(ctk.CTk):
                 "end",
                 f"{j['Data']:<12} {j['Casa']:<20} {placar:>7}  {j['Fora']:<20}\n"
             )
+
+    # ------------------------------------------------------------------
+    # Frame: Retreinar Bot
+    # ------------------------------------------------------------------
+    def _criar_frame_treino(self):
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+
+        ctk.CTkLabel(
+            frame, text="Retreinar Bot",
+            font=ctk.CTkFont(size=24, weight="bold"),
+        ).pack(pady=(20, 5))
+
+        ctk.CTkLabel(
+            frame,
+            text="Testa multiplas configuracoes e guarda a melhor.\n"
+                 "Cada resultado fechado alimenta o dataset automaticamente.",
+            font=ctk.CTkFont(size=13),
+        ).pack(pady=(0, 15))
+
+        ctrl = ctk.CTkFrame(frame, fg_color="transparent")
+        ctrl.pack(pady=10)
+
+        ctk.CTkLabel(ctrl, text="Tentativas:").grid(row=0, column=0, padx=5)
+        self._entry_tentativas = ctk.CTkEntry(ctrl, width=60)
+        self._entry_tentativas.insert(0, "10")
+        self._entry_tentativas.grid(row=0, column=1, padx=5)
+
+        self._btn_treinar = ctk.CTkButton(
+            ctrl, text="Treinar Agora",
+            font=ctk.CTkFont(weight="bold"),
+            command=self._iniciar_treino,
+        )
+        self._btn_treinar.grid(row=0, column=2, padx=15)
+
+        self._txt_treino = ctk.CTkTextbox(
+            frame, width=700, height=350,
+            font=ctk.CTkFont(family="Consolas", size=13),
+        )
+        self._txt_treino.pack(pady=10, padx=20, fill="both", expand=True)
+
+        return frame
+
+    def _iniciar_treino(self):
+        try:
+            n = int(self._entry_tentativas.get())
+        except ValueError:
+            n = 10
+
+        self._btn_treinar.configure(state="disabled", text="Treinando...")
+        self._txt_treino.delete("0.0", "end")
+        self._txt_treino.insert("end", f"Iniciando {n} tentativas de treino...\n\n")
+
+        def callback(msg):
+            self.after(0, lambda m=msg: self._txt_treino.insert("end", m + "\n"))
+
+        def worker():
+            try:
+                result, resumo = modelo.retreinar_modelo(tentativas=n, callback=callback)
+                if result:
+                    m, s, n_amostras, nome = result
+                    self._modelo = m
+                    self._scaler = s
+                    self._n_amostras = n_amostras
+                    self._nome_modelo = nome
+                    self.after(0, lambda: self._lbl_status.configure(
+                        text=f"Modelo: {nome} ({n_amostras} amostras)", text_color="green"
+                    ))
+                self.after(0, lambda: self._txt_treino.insert("end", f"\n{resumo}\n"))
+            except Exception as e:
+                self.after(0, lambda: self._txt_treino.insert("end", f"\nErro: {e}\n"))
+            finally:
+                self.after(0, lambda: self._btn_treinar.configure(
+                    state="normal", text="Treinar Agora"
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Frame: Resultados
