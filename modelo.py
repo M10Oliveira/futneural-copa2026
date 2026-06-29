@@ -36,18 +36,21 @@ def treinar_modelo():
     if len(df) < 20:
         return None, None, 0, ""
 
-    X = df[FEATURES]
+    X = df[FEATURES].fillna({
+        "Escanteios_Media_Casa": 4.5, "Cartoes_Media_Casa": 2.0,
+        "Escanteios_Media_Fora": 4.5, "Cartoes_Media_Fora": 2.0,
+    })
     y = df["Resultado_Real"]
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=0.2, random_state=0
     )
 
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
     X_test_s = scaler.transform(X_test)
 
-    modelo = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=1000, random_state=42)
+    modelo = MLPClassifier(hidden_layer_sizes=(128, 64, 32), max_iter=1500, random_state=42)
     modelo.fit(X_train_s, y_train)
 
     joblib.dump((modelo, scaler), cfg.MODELO_PATH)
@@ -68,7 +71,10 @@ def retreinar_modelo(tentativas=10, callback=None):
     if len(df) < 20:
         return None, f"Dataset muito pequeno ({len(df)} linhas, minimo 20)."
 
-    X = df[FEATURES]
+    X = df[FEATURES].fillna({
+        "Escanteios_Media_Casa": 4.5, "Cartoes_Media_Casa": 2.0,
+        "Escanteios_Media_Fora": 4.5, "Cartoes_Media_Fora": 2.0,
+    })
     y = df["Resultado_Real"]
 
     # Split FIXO para todos: mesmo treino, mesmo teste, comparacao justa
