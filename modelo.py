@@ -21,7 +21,8 @@ FEATURES = [
 def treinar_modelo():
     if os.path.exists(cfg.MODELO_PATH):
         modelo, scaler = joblib.load(cfg.MODELO_PATH)
-        return modelo, scaler, 5000, "MLP"
+        n = len(pd.read_csv(cfg.DATASET_PATH)) if os.path.exists(cfg.DATASET_PATH) else 0
+        return modelo, scaler, n, "MLP"
 
     if not os.path.exists(cfg.DATASET_PATH):
         return None, None, 0, ""
@@ -93,11 +94,12 @@ def retreinar_modelo(tentativas=10, callback=None):
     if callback:
         callback(f"Acuracia atual: {acc_atual:.1f}% (so salva se superar)")
 
+    scaler_base = StandardScaler()
+    X_train_s = scaler_base.fit_transform(X_train)
+    X_test_s = scaler_base.transform(X_test)
+
     for i in range(tentativas):
         seed = random.randint(1, 99999)
-        scaler = StandardScaler()
-        X_train_s = scaler.fit_transform(X_train)
-        X_test_s = scaler.transform(X_test)
 
         modelo = MLPClassifier(
             hidden_layer_sizes=(128, 64, 32),
@@ -116,7 +118,7 @@ def retreinar_modelo(tentativas=10, callback=None):
         if acc > melhor_acc:
             melhor_acc = acc
             melhor_modelo = modelo
-            melhor_scaler = scaler
+            melhor_scaler = scaler_base
 
     resumo = "\n".join(resultados)
 
@@ -219,6 +221,11 @@ def calcular_mercados(lambda_casa, lambda_fora, matriz, prob_casa, prob_empate, 
                 ht_empate += p
             else:
                 ht_fora += p
+    ht_total = ht_casa + ht_empate + ht_fora
+    if ht_total > 0:
+        ht_casa /= ht_total
+        ht_empate /= ht_total
+        ht_fora /= ht_total
     mercados["ht_casa"] = round(ht_casa, 4)
     mercados["ht_empate"] = round(ht_empate, 4)
     mercados["ht_fora"] = round(ht_fora, 4)
@@ -370,9 +377,21 @@ def realizar_previsao(time_casa, time_fora, modelo_ml, scaler, n_amostras, nome_
 # ---------------------------------------------------------------------------
 # Previsao Copa 2026 (usa APENAS dados do torneio atual, Poisson puro)
 # ---------------------------------------------------------------------------
+def _resolver_nome_copa(nome):
+    stats = fb.obter_estatisticas_copa(nome)
+    if stats:
+        return nome, stats
+    traduzido = fb._traduzir_nome_groq(nome)
+    if traduzido and traduzido.lower() != nome.lower():
+        stats = fb.obter_estatisticas_copa(traduzido)
+        if stats:
+            return traduzido, stats
+    return nome, None
+
+
 def realizar_previsao_copa(time_casa, time_fora):
-    stats_casa = fb.obter_estatisticas_copa(time_casa)
-    stats_fora = fb.obter_estatisticas_copa(time_fora)
+    nome_casa, stats_casa = _resolver_nome_copa(time_casa)
+    nome_fora, stats_fora = _resolver_nome_copa(time_fora)
 
     if not stats_casa:
         raise RuntimeError(
@@ -384,6 +403,7 @@ def realizar_previsao_copa(time_casa, time_fora):
             f"'{time_fora}' nao tem jogos registrados na Copa 2026. "
             f"Registre os resultados na aba 'Jogos da Copa'."
         )
+    time_casa, time_fora = nome_casa, nome_fora
 
     fonte_casa = f"Copa 2026 ({stats_casa['Jogos_Analisados']} jogos)"
     fonte_fora = f"Copa 2026 ({stats_fora['Jogos_Analisados']} jogos)"
@@ -420,6 +440,8 @@ def realizar_previsao_copa(time_casa, time_fora):
     }
 
     resultado["explicacao"] = gerar_explicacao(resultado)
+
+    salvar_previsao_excel(resultado)
     return resultado
 
 
@@ -546,12 +568,19 @@ def gerar_explicacao(r):
     if cfg.groq_client is None:
         return resumo
 
+    contexto = ""
+    if "Copa 2026" in r.get("modelo_usado", ""):
+        contexto = (
+            "CONTEXTO: esta previsao usa APENAS dados reais dos jogos da Copa "
+            "do Mundo 2026 em andamento. Mencione isso na analise. "
+        )
+
     prompt = (
         f"Voce e um analista de futebol. Reescreva os dados abaixo em um texto "
         f"natural e fluido em portugues (3-5 frases), como se estivesse explicando "
         f"a previsao para alguem que vai apostar. NAO invente informacoes que nao "
         f"estejam nos dados. NAO mencione nomes de jogadores. Use apenas os "
-        f"numeros e fatos fornecidos.\n\n"
+        f"numeros e fatos fornecidos. {contexto}\n\n"
         f"Jogo: {r['time_casa']} x {r['time_fora']}\n"
         f"Dados: {resumo}"
     )
@@ -636,22 +665,26 @@ def salvar_previsao_excel(r):
 # ---------------------------------------------------------------------------
 # Fechamento de resultados (com atualizacao de nivel)
 # ---------------------------------------------------------------------------
-def _adicionar_ao_dataset(df, idx, resultado_real):
+def _adicionar_ao_dataset(df, idx, resultado_real, gols_casa=0, gols_fora=0):
     import csv
     row = df.loc[idx]
+    esc_casa = row.get("Escanteios_Media_Casa", 4.5)
+    esc_fora = row.get("Escanteios_Media_Fora", 4.5)
+    cart_casa = row.get("Cartoes_Media_Casa", 2.0)
+    cart_fora = row.get("Cartoes_Media_Fora", 2.0)
     nova_linha = {
         "GF_Casa": row.get("GF_Media_Casa", 1.5),
         "GC_Casa": row.get("GC_Media_Casa", 1.0),
         "Forma_Casa": row.get("Forma_Casa", 1.5),
-        "Escanteios_Media_Casa": row.get("Escanteios_Media_Casa", 4.5),
-        "Cartoes_Media_Casa": row.get("Cartoes_Media_Casa", 2.0),
+        "Escanteios_Media_Casa": esc_casa,
+        "Cartoes_Media_Casa": cart_casa,
         "GF_Fora": row.get("GF_Media_Fora", 1.5),
         "GC_Fora": row.get("GC_Media_Fora", 1.0),
         "Forma_Fora": row.get("Forma_Fora", 1.5),
-        "Escanteios_Media_Fora": row.get("Escanteios_Media_Fora", 4.5),
-        "Cartoes_Media_Fora": row.get("Cartoes_Media_Fora", 2.0),
-        "Escanteios_Total": 0,
-        "Cartoes_Total": 0,
+        "Escanteios_Media_Fora": esc_fora,
+        "Cartoes_Media_Fora": cart_fora,
+        "Escanteios_Total": round(esc_casa + esc_fora),
+        "Cartoes_Total": round(cart_casa + cart_fora),
         "Resultado_Real": resultado_real,
     }
     cabecalho = list(nova_linha.keys())
@@ -784,9 +817,13 @@ def fechar_resultados(callback_log=None):
     return log, manuais
 
 
-def fechar_resultado_manual(idx, gols_casa, gols_fora):
+def fechar_resultado_manual(id_previsao, gols_casa, gols_fora):
     df = pd.read_excel(cfg.EXCEL_PATH)
     for col in ["Resultado Real", "Status Previsao"]:
         df[col] = df[col].astype(object)
+    match = df[df["ID"] == id_previsao]
+    if match.empty:
+        raise ValueError(f"Previsao ID {id_previsao} nao encontrada.")
+    idx = match.index[0]
     _classificar(df, idx, gols_casa, gols_fora)
     df.to_excel(cfg.EXCEL_PATH, index=False)

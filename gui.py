@@ -298,6 +298,7 @@ class App(ctk.CTk):
 
         self._copa_txt_mercados.delete("0.0", "end")
         self._copa_txt_mercados.insert("end", modelo.formatar_previsao_texto(r))
+        self._atualizar_nivel_label()
 
     def _erro_previsao_copa(self, msg):
         self._copa_prev_progress.stop()
@@ -388,10 +389,14 @@ class App(ctk.CTk):
             self._copa_log.insert("end", "Preencha os nomes dos dois times.\n")
             return
 
-        esc_c = int(self._copa_esc_casa.get() or 0)
-        esc_f = int(self._copa_esc_fora.get() or 0)
-        cart_c = int(self._copa_cart_casa.get() or 0)
-        cart_f = int(self._copa_cart_fora.get() or 0)
+        try:
+            esc_c = int(self._copa_esc_casa.get() or 0)
+            esc_f = int(self._copa_esc_fora.get() or 0)
+            cart_c = int(self._copa_cart_casa.get() or 0)
+            cart_f = int(self._copa_cart_fora.get() or 0)
+        except ValueError:
+            self._copa_log.insert("end", "Escanteios e cartoes devem ser numeros.\n")
+            return
 
         fb.registrar_resultado_copa(casa, fora, gc, gf, esc_c, esc_f, cart_c, cart_f)
         self._copa_log.insert("end",
@@ -569,7 +574,7 @@ class App(ctk.CTk):
 
     def _fechar_manual(self):
         try:
-            idx = int(self._entry_id_manual.get()) - 1
+            id_prev = int(self._entry_id_manual.get())
             gc = int(self._entry_gols_casa.get())
             gf = int(self._entry_gols_fora.get())
         except ValueError:
@@ -577,8 +582,8 @@ class App(ctk.CTk):
             return
 
         try:
-            modelo.fechar_resultado_manual(idx, gc, gf)
-            self._append_resultado(f"ID {idx+1} fechado manualmente: {gc} x {gf}")
+            modelo.fechar_resultado_manual(id_prev, gc, gf)
+            self._append_resultado(f"ID {id_prev} fechado manualmente: {gc} x {gf}")
             self._atualizar_nivel_label()
         except Exception as e:
             self._append_resultado(f"Erro ao fechar: {e}")
@@ -703,6 +708,13 @@ class App(ctk.CTk):
             import os
             linhas.append(f"Modelo treinado: {'SIM' if os.path.exists(cfg.MODELO_PATH) else 'NAO'}")
             linhas.append(f"Dataset: {'SIM' if os.path.exists(cfg.DATASET_PATH) else 'NAO'}")
+
+            jogos_copa = fb._carregar_copa_csv()
+            linhas.append(f"Copa 2026: {len(jogos_copa)} jogos registrados"
+                          if jogos_copa else "Copa 2026: sem jogos registrados")
+
+            n = nivel.obter_nivel()
+            linhas.append(f"Nivel: {n['nivel']}/10 ({n['win_rate']}% em {n['total']} jogos)")
 
             texto = "\n".join(linhas)
             self.after(0, lambda: self._txt_status.insert("end", texto))
