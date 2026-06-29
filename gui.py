@@ -43,6 +43,7 @@ class App(ctk.CTk):
 
         botoes = [
             ("Nova Previsao", lambda: self._mostrar_frame("previsao")),
+            ("Previsao Copa 2026", lambda: self._mostrar_frame("previsao_copa")),
             ("Jogos da Copa", lambda: self._mostrar_frame("copa")),
             ("Resultados", lambda: self._mostrar_frame("resultados")),
             ("Retreinar Bot", lambda: self._mostrar_frame("treino")),
@@ -55,10 +56,10 @@ class App(ctk.CTk):
             )
 
         self._lbl_nivel = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=12, weight="bold"))
-        self._lbl_nivel.grid(row=7, column=0, padx=10, pady=(10, 2), sticky="s")
+        self._lbl_nivel.grid(row=8, column=0, padx=10, pady=(10, 2), sticky="s")
 
         self._lbl_status = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=11))
-        self._lbl_status.grid(row=8, column=0, padx=10, pady=(2, 10), sticky="s")
+        self._lbl_status.grid(row=9, column=0, padx=10, pady=(2, 10), sticky="s")
 
     # ------------------------------------------------------------------
     # Frames
@@ -66,6 +67,7 @@ class App(ctk.CTk):
     def _criar_frames(self):
         self._frames = {}
         self._frames["previsao"] = self._criar_frame_previsao()
+        self._frames["previsao_copa"] = self._criar_frame_previsao_copa()
         self._frames["copa"] = self._criar_frame_copa()
         self._frames["treino"] = self._criar_frame_treino()
         self._frames["resultados"] = self._criar_frame_resultados()
@@ -195,6 +197,114 @@ class App(ctk.CTk):
         self._progress.pack_forget()
         self._btn_prever.configure(state="normal", text="Gerar Previsao")
         self._lbl_detalhes.configure(text=f"Erro: {msg}", text_color="red")
+
+    # ------------------------------------------------------------------
+    # Frame: Previsao Copa 2026 (dados APENAS do torneio)
+    # ------------------------------------------------------------------
+    def _criar_frame_previsao_copa(self):
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+
+        ctk.CTkLabel(
+            frame, text="Previsao Copa 2026",
+            font=ctk.CTkFont(size=24, weight="bold"),
+        ).pack(pady=(20, 5))
+
+        ctk.CTkLabel(
+            frame,
+            text="Usa APENAS os dados reais da Copa 2026 (sem historico antigo).",
+            font=ctk.CTkFont(size=13),
+        ).pack(pady=(0, 15))
+
+        inputs = ctk.CTkFrame(frame, fg_color="transparent")
+        inputs.pack(pady=10)
+
+        self._copa_prev_casa = ctk.CTkEntry(
+            inputs, placeholder_text="Casa (ex: Brazil)", width=220, height=40
+        )
+        self._copa_prev_casa.grid(row=0, column=0, padx=10)
+
+        ctk.CTkLabel(
+            inputs, text="VS", font=ctk.CTkFont(size=18, weight="bold")
+        ).grid(row=0, column=1, padx=10)
+
+        self._copa_prev_fora = ctk.CTkEntry(
+            inputs, placeholder_text="Fora (ex: Argentina)", width=220, height=40
+        )
+        self._copa_prev_fora.grid(row=0, column=2, padx=10)
+
+        self._btn_copa_prever = ctk.CTkButton(
+            frame, text="Prever (Copa 2026)", height=40,
+            font=ctk.CTkFont(weight="bold"),
+            command=self._iniciar_previsao_copa,
+        )
+        self._btn_copa_prever.pack(pady=15)
+
+        self._copa_prev_progress = ctk.CTkProgressBar(frame, width=400, mode="indeterminate")
+
+        cards = ctk.CTkFrame(frame)
+        cards.pack(pady=10, padx=20, fill="x")
+        cards.columnconfigure((0, 1, 2), weight=1)
+
+        self._copa_lbl_pc = ctk.CTkLabel(cards, text="Casa\n--%", font=ctk.CTkFont(size=18))
+        self._copa_lbl_pc.grid(row=0, column=0, pady=15, padx=10)
+        self._copa_lbl_pe = ctk.CTkLabel(cards, text="Empate\n--%", font=ctk.CTkFont(size=18))
+        self._copa_lbl_pe.grid(row=0, column=1, pady=15, padx=10)
+        self._copa_lbl_pf = ctk.CTkLabel(cards, text="Fora\n--%", font=ctk.CTkFont(size=18))
+        self._copa_lbl_pf.grid(row=0, column=2, pady=15, padx=10)
+
+        self._copa_txt_mercados = ctk.CTkTextbox(
+            frame, width=700, height=280,
+            font=ctk.CTkFont(family="Consolas", size=12),
+        )
+        self._copa_txt_mercados.pack(pady=(5, 10), padx=20, fill="both", expand=True)
+
+        return frame
+
+    def _iniciar_previsao_copa(self):
+        casa = self._copa_prev_casa.get().strip()
+        fora = self._copa_prev_fora.get().strip()
+        if not casa or not fora:
+            self._copa_txt_mercados.delete("0.0", "end")
+            self._copa_txt_mercados.insert("end", "Preencha os dois times.")
+            return
+
+        self._btn_copa_prever.configure(state="disabled", text="Calculando...")
+        self._copa_prev_progress.pack(pady=5)
+        self._copa_prev_progress.start()
+
+        def worker():
+            try:
+                r = modelo.realizar_previsao_copa(casa, fora)
+                self.after(0, self._exibir_previsao_copa, r)
+            except Exception as e:
+                self.after(0, self._erro_previsao_copa, str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _exibir_previsao_copa(self, r):
+        self._copa_prev_progress.stop()
+        self._copa_prev_progress.pack_forget()
+        self._btn_copa_prever.configure(state="normal", text="Prever (Copa 2026)")
+
+        self._copa_lbl_pc.configure(
+            text=f"Casa\n{r['prob_casa']*100:.1f}%", text_color="#2ecc71"
+        )
+        self._copa_lbl_pe.configure(
+            text=f"Empate\n{r['prob_empate']*100:.1f}%", text_color="#f1c40f"
+        )
+        self._copa_lbl_pf.configure(
+            text=f"Fora\n{r['prob_fora']*100:.1f}%", text_color="#e74c3c"
+        )
+
+        self._copa_txt_mercados.delete("0.0", "end")
+        self._copa_txt_mercados.insert("end", modelo.formatar_previsao_texto(r))
+
+    def _erro_previsao_copa(self, msg):
+        self._copa_prev_progress.stop()
+        self._copa_prev_progress.pack_forget()
+        self._btn_copa_prever.configure(state="normal", text="Prever (Copa 2026)")
+        self._copa_txt_mercados.delete("0.0", "end")
+        self._copa_txt_mercados.insert("end", f"Erro: {msg}")
 
     # ------------------------------------------------------------------
     # Frame: Jogos da Copa 2026 (dados locais)

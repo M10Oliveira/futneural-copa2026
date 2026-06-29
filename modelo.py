@@ -358,6 +358,62 @@ def realizar_previsao(time_casa, time_fora, modelo_ml, scaler, n_amostras, nome_
 
 
 # ---------------------------------------------------------------------------
+# Previsao Copa 2026 (usa APENAS dados do torneio atual, Poisson puro)
+# ---------------------------------------------------------------------------
+def realizar_previsao_copa(time_casa, time_fora):
+    stats_casa = fb.obter_estatisticas_copa(time_casa)
+    stats_fora = fb.obter_estatisticas_copa(time_fora)
+
+    if not stats_casa:
+        raise RuntimeError(
+            f"'{time_casa}' nao tem jogos registrados na Copa 2026. "
+            f"Registre os resultados na aba 'Jogos da Copa'."
+        )
+    if not stats_fora:
+        raise RuntimeError(
+            f"'{time_fora}' nao tem jogos registrados na Copa 2026. "
+            f"Registre os resultados na aba 'Jogos da Copa'."
+        )
+
+    fonte_casa = f"Copa 2026 ({stats_casa['Jogos_Analisados']} jogos)"
+    fonte_fora = f"Copa 2026 ({stats_fora['Jogos_Analisados']} jogos)"
+
+    lambda_casa, lambda_fora, p_c, p_e, p_f, matriz = calcular_poisson(
+        stats_casa["GF_Media"], stats_fora["GC_Media"],
+        stats_fora["GF_Media"], stats_casa["GC_Media"],
+    )
+
+    mercados = calcular_mercados(
+        lambda_casa, lambda_fora, matriz, p_c, p_e, p_f,
+        stats_casa, stats_fora,
+    )
+
+    info_nivel = nivel.obter_nivel()
+
+    resultado = {
+        "time_casa": time_casa,
+        "time_fora": time_fora,
+        "prob_casa": p_c,
+        "prob_empate": p_e,
+        "prob_fora": p_f,
+        "xg_casa": round(lambda_casa, 2),
+        "xg_fora": round(lambda_fora, 2),
+        "modelo_usado": "Poisson Copa 2026",
+        "peso_ml": 0.0,
+        "fonte_casa": fonte_casa,
+        "fonte_fora": fonte_fora,
+        "stats_casa": stats_casa,
+        "stats_fora": stats_fora,
+        "fixture_info": None,
+        "mercados": mercados,
+        "nivel": info_nivel,
+    }
+
+    resultado["explicacao"] = gerar_explicacao(resultado)
+    return resultado
+
+
+# ---------------------------------------------------------------------------
 # Formatar previsao como texto (pronto para Telegram)
 # ---------------------------------------------------------------------------
 def formatar_previsao_texto(r):
