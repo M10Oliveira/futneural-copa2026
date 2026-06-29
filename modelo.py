@@ -134,9 +134,12 @@ def retreinar_modelo(tentativas=10, callback=None):
 # ---------------------------------------------------------------------------
 # Poisson — retorna lambdas, probs 1X2 e matriz de placares
 # ---------------------------------------------------------------------------
-def calcular_poisson(gf_casa, gc_fora, gf_fora, gc_casa, max_gols=7):
+def calcular_poisson(gf_casa, gc_fora, gf_fora, gc_casa, max_gols=12):
     lambda_casa = max((gf_casa * gc_fora) / cfg.MEDIA_GOLS_REFERENCIA, 0.35)
     lambda_fora = max((gf_fora * gc_casa) / cfg.MEDIA_GOLS_REFERENCIA, 0.35)
+    # Teto para evitar distorcoes com poucos jogos (ex: 7x1 num unico jogo)
+    lambda_casa = min(lambda_casa, 4.5)
+    lambda_fora = min(lambda_fora, 4.5)
 
     matriz = np.zeros((max_gols, max_gols))
     for i in range(max_gols):
@@ -152,6 +155,13 @@ def calcular_poisson(gf_casa, gc_fora, gf_fora, gc_casa, max_gols=7):
                 prob_empate += matriz[i][j]
             else:
                 prob_fora += matriz[i][j]
+
+    # Renormaliza para garantir que soma 100%
+    total = prob_casa + prob_empate + prob_fora
+    if total > 0:
+        prob_casa /= total
+        prob_empate /= total
+        prob_fora /= total
 
     return lambda_casa, lambda_fora, prob_casa, prob_empate, prob_fora, matriz
 
