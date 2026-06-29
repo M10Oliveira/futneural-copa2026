@@ -331,6 +331,8 @@ def realizar_previsao(time_casa, time_fora, modelo_ml, scaler, n_amostras, nome_
         "nivel": info_nivel,
     }
 
+    resultado["explicacao"] = gerar_explicacao(resultado)
+
     salvar_previsao_excel(resultado)
     return resultado
 
@@ -384,12 +386,99 @@ def formatar_previsao_texto(r):
         f"Over 4.5: {m.get('cartoes_over_4.5', 0)*100:.0f}%  |  "
         f"Over 5.5: {m.get('cartoes_over_5.5', 0)*100:.0f}%",
         f"",
+        f"ANALISE",
+        f"  {r.get('explicacao', '')}",
+        f"",
         f"Modelo: {r['modelo_usado']}",
         f"Nivel Bot: {n['nivel']}/10  ({n['win_rate']}% acerto em {n['total']} jogos)",
         f"Fonte: {r['fonte_casa']} | {r['fonte_fora']}",
     ])
 
     return "\n".join(linhas)
+
+
+# ---------------------------------------------------------------------------
+# Explicacao humanizada (Groq reescreve dados tecnicos em linguagem natural)
+# ---------------------------------------------------------------------------
+def _gerar_resumo_tecnico(r):
+    m = r["mercados"]
+    sc = r["stats_casa"]
+    sf = r["stats_fora"]
+    casa = r["time_casa"]
+    fora = r["time_fora"]
+
+    pontos = []
+
+    if r["prob_casa"] > r["prob_fora"] and r["prob_casa"] > r["prob_empate"]:
+        favorito, prob = casa, r["prob_casa"]
+    elif r["prob_fora"] > r["prob_casa"] and r["prob_fora"] > r["prob_empate"]:
+        favorito, prob = fora, r["prob_fora"]
+    else:
+        favorito, prob = "empate", r["prob_empate"]
+    pontos.append(f"Favorito: {favorito} ({prob*100:.1f}%).")
+
+    pontos.append(f"{casa} marca em media {sc['GF_Media']} gols/jogo e sofre {sc['GC_Media']}.")
+    pontos.append(f"{fora} marca em media {sf['GF_Media']} gols/jogo e sofre {sf['GC_Media']}.")
+
+    forma_casa = sc.get("Forma_Media", 1.5)
+    forma_fora = sf.get("Forma_Media", 1.5)
+    if forma_casa >= 2.5:
+        pontos.append(f"{casa} vem em otima fase ({forma_casa:.1f} pts/jogo).")
+    elif forma_casa <= 1.0:
+        pontos.append(f"{casa} vem em fase ruim ({forma_casa:.1f} pts/jogo).")
+    if forma_fora >= 2.5:
+        pontos.append(f"{fora} vem em otima fase ({forma_fora:.1f} pts/jogo).")
+    elif forma_fora <= 1.0:
+        pontos.append(f"{fora} vem em fase ruim ({forma_fora:.1f} pts/jogo).")
+
+    pontos.append(f"xG esperado: {r['xg_casa']} x {r['xg_fora']}.")
+    pontos.append(f"Over 2.5 gols: {m['over_2.5']*100:.0f}%. BTTS: {m['btts_sim']*100:.0f}%.")
+
+    esc = m["escanteios_esperados"]
+    cart = m["cartoes_esperados"]
+    pontos.append(f"Escanteios esperados: ~{esc}. Cartoes esperados: ~{cart}.")
+
+    if sc.get("Escanteios_Media"):
+        pontos.append(f"{casa} tem media de {sc['Escanteios_Media']} escanteios/jogo.")
+    if sf.get("Escanteios_Media"):
+        pontos.append(f"{fora} tem media de {sf['Escanteios_Media']} escanteios/jogo.")
+    if sc.get("Cartoes_Media"):
+        pontos.append(f"{casa} recebe em media {sc['Cartoes_Media']} cartoes/jogo.")
+    if sf.get("Cartoes_Media"):
+        pontos.append(f"{fora} recebe em media {sf['Cartoes_Media']} cartoes/jogo.")
+
+    top_placar = m["placares_exatos"][0] if m["placares_exatos"] else None
+    if top_placar:
+        pontos.append(f"Placar mais provavel: {top_placar[0]} ({top_placar[1]*100:.1f}%).")
+
+    return " ".join(pontos)
+
+
+def gerar_explicacao(r):
+    resumo = _gerar_resumo_tecnico(r)
+
+    if cfg.groq_client is None:
+        return resumo
+
+    prompt = (
+        f"Voce e um analista de futebol. Reescreva os dados abaixo em um texto "
+        f"natural e fluido em portugues (3-5 frases), como se estivesse explicando "
+        f"a previsao para alguem que vai apostar. NAO invente informacoes que nao "
+        f"estejam nos dados. NAO mencione nomes de jogadores. Use apenas os "
+        f"numeros e fatos fornecidos.\n\n"
+        f"Jogo: {r['time_casa']} x {r['time_fora']}\n"
+        f"Dados: {resumo}"
+    )
+
+    try:
+        resposta = cfg.groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            max_tokens=300,
+        )
+        return resposta.choices[0].message.content.strip()
+    except Exception:
+        return resumo
 
 
 # ---------------------------------------------------------------------------
