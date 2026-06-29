@@ -307,10 +307,15 @@ def _carregar_copa_csv():
         return list(csv.DictReader(f))
 
 
-def registrar_resultado_copa(casa, fora, gols_casa, gols_fora):
+def registrar_resultado_copa(casa, fora, gols_casa, gols_fora,
+                              escanteios_casa=0, escanteios_fora=0,
+                              cartoes_casa=0, cartoes_fora=0):
     import csv
     import os
-    cabecalho = ["Data", "Casa", "Fora", "Gols_Casa", "Gols_Fora"]
+    cabecalho = [
+        "Data", "Casa", "Fora", "Gols_Casa", "Gols_Fora",
+        "Escanteios_Casa", "Escanteios_Fora", "Cartoes_Casa", "Cartoes_Fora",
+    ]
     existe = os.path.exists(cfg.COPA_CSV_PATH)
     with open(cfg.COPA_CSV_PATH, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=cabecalho)
@@ -322,6 +327,10 @@ def registrar_resultado_copa(casa, fora, gols_casa, gols_fora):
             "Fora": fora.strip(),
             "Gols_Casa": int(gols_casa),
             "Gols_Fora": int(gols_fora),
+            "Escanteios_Casa": int(escanteios_casa),
+            "Escanteios_Fora": int(escanteios_fora),
+            "Cartoes_Casa": int(cartoes_casa),
+            "Cartoes_Fora": int(cartoes_fora),
         })
 
 
@@ -332,6 +341,7 @@ def obter_estatisticas_copa(nome_time):
 
     nome = nome_time.strip().lower()
     gols_feitos, gols_sofridos, pontos = [], [], []
+    escanteios, cartoes = [], []
 
     for j in jogos:
         casa = j["Casa"].strip().lower()
@@ -344,24 +354,37 @@ def obter_estatisticas_copa(nome_time):
 
         if casa == nome:
             gf, gc = g_casa, g_fora
+            esc = int(j.get("Escanteios_Casa", 0) or 0)
+            cart = int(j.get("Cartoes_Casa", 0) or 0)
         elif fora == nome:
             gf, gc = g_fora, g_casa
+            esc = int(j.get("Escanteios_Fora", 0) or 0)
+            cart = int(j.get("Cartoes_Fora", 0) or 0)
         else:
             continue
 
         gols_feitos.append(gf)
         gols_sofridos.append(gc)
         pontos.append(3 if gf > gc else (1 if gf == gc else 0))
+        if esc > 0:
+            escanteios.append(esc)
+        if cart > 0:
+            cartoes.append(cart)
 
     if not gols_feitos:
         return None
 
-    return {
+    stats = {
         "GF_Media": round(sum(gols_feitos) / len(gols_feitos), 2),
         "GC_Media": round(sum(gols_sofridos) / len(gols_sofridos), 2),
         "Forma_Media": round(sum(pontos) / len(pontos), 2),
         "Jogos_Analisados": len(gols_feitos),
     }
+    if escanteios:
+        stats["Escanteios_Media"] = round(sum(escanteios) / len(escanteios), 1)
+    if cartoes:
+        stats["Cartoes_Media"] = round(sum(cartoes) / len(cartoes), 1)
+    return stats
 
 
 # ---------------------------------------------------------------------------

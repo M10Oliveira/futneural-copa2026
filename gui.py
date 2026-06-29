@@ -231,6 +231,25 @@ class App(ctk.CTk):
         self._copa_fora = ctk.CTkEntry(entrada, width=160, placeholder_text="Ex: Serbia")
         self._copa_fora.grid(row=0, column=7, padx=5)
 
+        stats_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        stats_frame.pack(pady=5)
+
+        ctk.CTkLabel(stats_frame, text="Escanteios Casa:").grid(row=0, column=0, padx=3)
+        self._copa_esc_casa = ctk.CTkEntry(stats_frame, width=40, placeholder_text="0")
+        self._copa_esc_casa.grid(row=0, column=1, padx=3)
+
+        ctk.CTkLabel(stats_frame, text="Fora:").grid(row=0, column=2, padx=3)
+        self._copa_esc_fora = ctk.CTkEntry(stats_frame, width=40, placeholder_text="0")
+        self._copa_esc_fora.grid(row=0, column=3, padx=3)
+
+        ctk.CTkLabel(stats_frame, text="Cartoes Casa:").grid(row=0, column=4, padx=3)
+        self._copa_cart_casa = ctk.CTkEntry(stats_frame, width=40, placeholder_text="0")
+        self._copa_cart_casa.grid(row=0, column=5, padx=3)
+
+        ctk.CTkLabel(stats_frame, text="Fora:").grid(row=0, column=6, padx=3)
+        self._copa_cart_fora = ctk.CTkEntry(stats_frame, width=40, placeholder_text="0")
+        self._copa_cart_fora.grid(row=0, column=7, padx=3)
+
         ctk.CTkButton(
             frame, text="Registrar Resultado",
             command=self._registrar_copa,
@@ -257,13 +276,21 @@ class App(ctk.CTk):
             self._copa_log.insert("end", "Preencha os nomes dos dois times.\n")
             return
 
-        fb.registrar_resultado_copa(casa, fora, gc, gf)
-        self._copa_log.insert("end", f"Registrado: {casa} {gc} x {gf} {fora}\n")
+        esc_c = int(self._copa_esc_casa.get() or 0)
+        esc_f = int(self._copa_esc_fora.get() or 0)
+        cart_c = int(self._copa_cart_casa.get() or 0)
+        cart_f = int(self._copa_cart_fora.get() or 0)
 
-        self._copa_casa.delete(0, "end")
-        self._copa_fora.delete(0, "end")
-        self._copa_gols_casa.delete(0, "end")
-        self._copa_gols_fora.delete(0, "end")
+        fb.registrar_resultado_copa(casa, fora, gc, gf, esc_c, esc_f, cart_c, cart_f)
+        self._copa_log.insert("end",
+            f"Registrado: {casa} {gc} x {gf} {fora} "
+            f"(esc: {esc_c}-{esc_f}, cart: {cart_c}-{cart_f})\n"
+        )
+
+        for entry in [self._copa_casa, self._copa_fora, self._copa_gols_casa,
+                       self._copa_gols_fora, self._copa_esc_casa, self._copa_esc_fora,
+                       self._copa_cart_casa, self._copa_cart_fora]:
+            entry.delete(0, "end")
 
     def _atualizar_lista_copa(self):
         jogos = fb._carregar_copa_csv()

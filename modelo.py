@@ -9,7 +9,10 @@ import config as cfg
 import api_football as fb
 import nivel
 
-FEATURES = ["GF_Casa", "GC_Casa", "Forma_Casa", "GF_Fora", "GC_Fora", "Forma_Fora"]
+FEATURES = [
+    "GF_Casa", "GC_Casa", "Forma_Casa", "Escanteios_Media_Casa", "Cartoes_Media_Casa",
+    "GF_Fora", "GC_Fora", "Forma_Fora", "Escanteios_Media_Fora", "Cartoes_Media_Fora",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +135,14 @@ def calcular_mercados(lambda_casa, lambda_fora, matriz, prob_casa, prob_empate, 
     mercados["ht_empate"] = round(ht_empate, 4)
     mercados["ht_fora"] = round(ht_fora, 4)
 
-    # --- Escanteios (heuristica com Poisson) ---
-    ataque_total = stats_casa["GF_Media"] + stats_fora["GF_Media"]
-    lambda_escanteios = cfg.MEDIA_ESCANTEIOS_BASE + (ataque_total - 2.0) * 1.5
+    # --- Escanteios (dados reais quando disponíveis, senao heuristica) ---
+    esc_casa = stats_casa.get("Escanteios_Media")
+    esc_fora = stats_fora.get("Escanteios_Media")
+    if esc_casa and esc_fora:
+        lambda_escanteios = esc_casa + esc_fora
+    else:
+        ataque_total = stats_casa["GF_Media"] + stats_fora["GF_Media"]
+        lambda_escanteios = cfg.MEDIA_ESCANTEIOS_BASE + (ataque_total - 2.0) * 1.5
     lambda_escanteios = max(lambda_escanteios, 6.0)
     mercados["escanteios_esperados"] = round(lambda_escanteios, 1)
 
@@ -142,12 +150,17 @@ def calcular_mercados(lambda_casa, lambda_fora, matriz, prob_casa, prob_empate, 
         prob_over = 1 - sum(poisson.pmf(k, lambda_escanteios) for k in range(int(linha) + 1))
         mercados[f"escanteios_over_{linha}"] = round(prob_over, 4)
 
-    # --- Cartoes (heuristica) ---
-    defesa = stats_casa["GC_Media"] + stats_fora["GC_Media"]
-    lambda_cartoes = cfg.MEDIA_CARTOES_BASE + (defesa - 2.0) * 0.8
-    forma_media = (stats_casa.get("Forma_Media", 1.5) + stats_fora.get("Forma_Media", 1.5)) / 2
-    if forma_media < 1.2:
-        lambda_cartoes += 0.5
+    # --- Cartoes (dados reais quando disponíveis, senao heuristica) ---
+    cart_casa = stats_casa.get("Cartoes_Media")
+    cart_fora = stats_fora.get("Cartoes_Media")
+    if cart_casa and cart_fora:
+        lambda_cartoes = cart_casa + cart_fora
+    else:
+        defesa = stats_casa["GC_Media"] + stats_fora["GC_Media"]
+        lambda_cartoes = cfg.MEDIA_CARTOES_BASE + (defesa - 2.0) * 0.8
+        forma_media = (stats_casa.get("Forma_Media", 1.5) + stats_fora.get("Forma_Media", 1.5)) / 2
+        if forma_media < 1.2:
+            lambda_cartoes += 0.5
     lambda_cartoes = max(lambda_cartoes, 2.5)
     mercados["cartoes_esperados"] = round(lambda_cartoes, 1)
 
@@ -213,8 +226,12 @@ def realizar_previsao(time_casa, time_fora, modelo_ml, scaler, n_amostras, nome_
         features = np.array([[
             stats_casa["GF_Media"], stats_casa["GC_Media"],
             stats_casa.get("Forma_Media", 1.5),
+            stats_casa.get("Escanteios_Media", 4.5),
+            stats_casa.get("Cartoes_Media", 2.0),
             stats_fora["GF_Media"], stats_fora["GC_Media"],
             stats_fora.get("Forma_Media", 1.5),
+            stats_fora.get("Escanteios_Media", 4.5),
+            stats_fora.get("Cartoes_Media", 2.0),
         ]])
         features_s = scaler.transform(features)
         prob_array = modelo_ml.predict_proba(features_s)[0]
